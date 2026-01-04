@@ -25,6 +25,10 @@ def main(run_dpo=True, run_ppo=True):
         print("Starting DPO Training...")
         print("="*60)
         dpo_model, dpo_tokenizer, dpo_logs = train_dpo()
+        print("\n" + "="*60)
+        print("DPO Training Complete")
+        print(dpo_logs)
+        print("="*60)
     
     # 2. Train PPO
     if run_ppo:
@@ -32,6 +36,12 @@ def main(run_dpo=True, run_ppo=True):
         print("Starting PPO Training...")
         print("="*60)
         _, _, ppo_logs = train_ppo()
+        print("\n" + "="*60)
+        print("PPO Training Complete")
+        print(ppo_logs)
+        print("="*60)
+
+
     
     # 3. Load reference model for win rate computation
     print("\nLoading reference model for evaluation...")
@@ -46,7 +56,7 @@ def main(run_dpo=True, run_ppo=True):
     # Load DPO model if not already loaded (in case we only ran PPO)
     if dpo_model is None and run_dpo:
         print("Loading trained DPO model...")
-        dpo_model = AutoModelForCausalLM.from_pretrained("./dpo_toxic_reduced_model").to(DEVICE)
+        dpo_model = AutoModelForCausalLM.from_pretrained("./models/dpo_toxic_reduced_model").to(DEVICE)
     
     # 4. Generate Plots with real data
     print("\n" + "="*60)

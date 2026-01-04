@@ -6,17 +6,17 @@ import random
 
 from config import (
     MODEL_NAME, EVAL_MODEL, DEVICE, BETA, LR,
-    BATCH_SIZE, MAX_LENGTH, CSV_PATH
+    BATCH_SIZE, MAX_LENGTH, CSV_PATH, MAX_SAMPLES, EVAL_STEPS
 )
 from dataset import IMDbToxicReductionDataset
 from dpo_utils import dpo_loss, get_batch_log_probs
-from eval_utils import evaluate_policy, TEST_PROMPTS
+from eval_utils import evaluate_policy, compute_kl_divergence, TEST_PROMPTS
 
 def train_dpo(
     csv_path=CSV_PATH,
     eval_model_name=EVAL_MODEL,
     test_prompts=TEST_PROMPTS,
-    eval_steps=10
+    eval_steps=EVAL_STEPS
 ):
     print("\n--- INITIALIZING DPO TRAINING WITH EVALUATION ---")
 
@@ -42,7 +42,7 @@ def train_dpo(
     )
 
     # B. Prepare Data
-    dataset = IMDbToxicReductionDataset(csv_path, tokenizer, max_samples=1000)
+    dataset = IMDbToxicReductionDataset(csv_path, tokenizer, max_samples=MAX_SAMPLES)
     if len(dataset) == 0:
         print("Dataset is empty. Aborting training.")
         return policy_model, tokenizer, []
@@ -95,26 +95,29 @@ def train_dpo(
             # --- 4. Evaluation (No Gradient) ---
             if global_step % eval_steps == 0:
                 with torch.no_grad():
-                    # Approximate KL (policy vs reference on winner)
-                    kl_estimate = (abs((policy_w_logps - ref_w_logps))).mean().item()
-
+                    policy_model.eval()
+                    
                     # Use first 20 fixed prompts for consistent evaluation
                     EVAL_PROMPTS = test_prompts[:20] if len(test_prompts) >= 20 else test_prompts
 
+                    # Compute KL using unified method (same as PPO)
+                    kl_estimate = compute_kl_divergence(
+                        policy_model, ref_model, tokenizer, DEVICE,
+                        EVAL_PROMPTS, num_samples=10
+                    )
+
                     safety_metrics = evaluate_policy(
-                        policy_model,
-                        tokenizer,
-                        safety_judge,
-                        EVAL_PROMPTS,
-                        DEVICE
+                        policy_model, tokenizer, safety_judge, EVAL_PROMPTS, DEVICE
                     )
 
                     eval_logs.append({
                         "step": global_step,
                         "loss": loss.item(),
                         "kl": kl_estimate,
-                        ** safety_metrics
+                        **safety_metrics
                     })
+                    
+                    policy_model.train()
 
             global_step += 1
 

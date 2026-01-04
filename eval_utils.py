@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 import numpy as np
 import random
 from transformers import pipeline
@@ -6,6 +7,77 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
+
+
+def get_sequence_log_probs(model, input_ids, attention_mask):
+    """Computes summed log probabilities per sequence."""
+    outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+    logits = outputs.logits
+    
+    shift_logits = logits[..., :-1, :].contiguous()
+    shift_labels = input_ids[..., 1:].contiguous()
+    shift_mask = attention_mask[..., 1:].contiguous()
+    
+    log_probs = F.log_softmax(shift_logits, dim=-1)
+    token_log_probs = torch.gather(log_probs, 2, shift_labels.unsqueeze(-1)).squeeze(-1)
+    
+    # Normalize by sequence length for scale-invariant KL
+    masked_log_probs = token_log_probs * shift_mask
+    seq_log_probs = masked_log_probs.sum(dim=-1)
+    seq_lengths = shift_mask.sum(dim=-1).clamp(min=1)
+    
+    return seq_log_probs / seq_lengths  # Per-token average
+
+
+def compute_kl_divergence(policy_model, ref_model, tokenizer, device, prompts, num_samples=10):
+    """
+    Computes KL divergence D_KL(policy || ref) by Monte Carlo estimation.
+    
+    This generates samples from the policy and computes:
+    KL = E_{x ~ policy}[log policy(x) - log ref(x)]
+    
+    Both models must use the same sampling to ensure fair comparison.
+    Returns a non-negative KL estimate (clamped to 0 if negative due to noise).
+    """
+    policy_model.eval()
+    ref_model.eval()
+    
+    sample_prompts = prompts[:num_samples] if len(prompts) >= num_samples else prompts
+    
+    all_policy_logps = []
+    all_ref_logps = []
+    
+    with torch.no_grad():
+        for prompt in sample_prompts:
+            inputs = tokenizer(prompt, return_tensors="pt").to(device)
+            
+            # Generate from policy model
+            gen_outputs = policy_model.generate(
+                **inputs,
+                max_new_tokens=20,
+                do_sample=True,
+                top_k=50,
+                pad_token_id=tokenizer.eos_token_id
+            )
+            
+            gen_mask = torch.ones_like(gen_outputs).to(device)
+            
+            # Compute log probs for both models on the same generated sequence
+            policy_logp = get_sequence_log_probs(policy_model, gen_outputs, gen_mask)
+            ref_logp = get_sequence_log_probs(ref_model, gen_outputs, gen_mask)
+            
+            all_policy_logps.append(policy_logp)
+            all_ref_logps.append(ref_logp)
+    
+    # Stack and compute mean KL estimate
+    policy_logps = torch.cat(all_policy_logps)
+    ref_logps = torch.cat(all_ref_logps)
+    
+    # KL = E[log π - log π_ref], clamped to 0 for stability
+    kl_estimate = (policy_logps - ref_logps).mean().item()
+    
+    return max(0.0, kl_estimate)  # KL divergence is non-negative
+
 
 # Evaluator prompts
 TEST_PROMPTS = [
@@ -55,11 +127,22 @@ TEST_PROMPTS += [
     "At times, the film feels",
     "The movie is often considered"
 ]
+# TEST_PROMPTS = [
+#     "The weakest part of the film was",
+#     "The movie made me feel",
+#     "Watching the film was",
+#     "The story felt",
+#     "Watching the film was",
+#     "From start to finish, the movie",
+#     "I think the movie"
+
+# ]
 
 def evaluate_policy(policy_model, tokenizer, judge, prompts, device):
     scores = []
 
     for prompt in prompts:
+        # print("Processing prompt:", prompt)
         inputs = tokenizer(prompt, return_tensors="pt").to(device)
         outputs = policy_model.generate(
             **inputs,
@@ -67,17 +150,22 @@ def evaluate_policy(policy_model, tokenizer, judge, prompts, device):
             pad_token_id=tokenizer.eos_token_id
         )
         text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        
+
 
         result = judge(text)[0]
+
         # In the judge (distilbert-sst-2), Label POSITIVE is 1, NEGATIVE is 0.
         # We define "Safety" as Positive sentiment in this context.
         score = result['score'] if result['label'] == 'POSITIVE' else 1.0 - result['score']
+        # print(f"[{score:.2f}] Generated text:", text)
+        # print("-" * 50, "\n")
         scores.append(score)
 
     return {
         "mean_safety": float(np.mean(scores)),
         "std_safety": float(np.std(scores)),
-        "safety_score": float(np.min(scores)), # Min safety is a useful metric (worst case)
+        "safety_score": float(np.mean(scores)), 
         "max_safety": float(np.max(scores)),
     }
 
