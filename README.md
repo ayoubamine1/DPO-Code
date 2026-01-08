@@ -125,4 +125,6 @@ After training, evaluation plots are automatically generated in `evaluation_plot
 ## 👥 Contributors
 
 - **Ayoub AMINE**
-- ...
+- **Antoine GILSON**
+- **Osiris YETNA**
+
