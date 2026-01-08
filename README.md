@@ -104,13 +104,63 @@ After training, evaluation plots are automatically generated in `evaluation_plot
 
 ## 📊 Key Results
 
-| Metric | DPO | PPO (Baseline) |
-|--------|-----|----------------|
-| Final Safety Score | TBD | TBD |
-| KL Divergence | TBD | TBD |
-| Training Time | TBD | TBD |
+Based on the evaluation dashboard (`dpo_results_dashboard.png`):
 
-*Results will be populated after training runs.*
+### 1. **Safety Evolution Over Training**
+- **DPO**: Steady improvement from ~0.74 → ~0.88 (120 steps)
+- **PPO**: Stagnant/declining from ~0.73 → ~0.67 (120 steps)
+- **Conclusion**: DPO achieves significantly higher safety scores with consistent improvement
+
+### 2. **Pareto Frontier (Safety vs. KL Divergence)**
+- **DPO**: Higher safety scores (0.78-0.89) at lower KL divergence (0.0-0.55)
+- **PPO**: Lower safety scores (0.65-0.74) across similar KL range
+- **Conclusion**: DPO is more efficient—achieves better safety with less model drift
+
+### 3. **Temperature Robustness**
+- **DPO Win Rate**: 0.70-0.82 across temperatures (0.25, 0.5, 0.75, 1.0)
+- **Reference Baseline**: 0.50 (random chance)
+- **Conclusion**: DPO maintains superior performance regardless of sampling temperature
+
+---
+
+## 🎯 Key Findings
+
+1. **DPO outperforms PPO** in safety alignment task
+   - Higher final safety scores (0.88 vs 0.67)
+   - Consistent improvement trajectory vs. stagnation
+
+2. **DPO is more efficient**
+   - Achieves higher safety with lower KL divergence
+   - Better trade-off between performance and model stability
+
+3. **DPO is robust**
+   - Maintains high win rates across different sampling temperatures
+   - More reliable than PPO for safety-critical applications
+
+4. **Simpler architecture**
+   - No separate reward model needed
+   - Direct optimization on preferences
+   - Easier to implement and debug
+
+---
+
+## 🔬 Experimental Setup Details
+
+**Hyperparameters**:
+- **DPO**: β = 0.1, LR = 5e-5, Batch Size = 4, Max Length = 64
+- **PPO**: Clip ε = 0.2, KL Coef = 0.1, Value Coef = 0.1, LR = 5e-5
+
+**Training**:
+- 500 samples from IMDb dataset
+- Evaluation every 30 steps
+- Same base model (DistilGPT-2) for fair comparison
+
+**Evaluation Metrics**:
+- Safety Score: Average sentiment score from DistilBERT-SST-2
+- KL Divergence: Monte Carlo estimate of D_KL(π_θ || π_ref)
+- Win Rate: Fraction of prompts where DPO > Reference at different temperatures
+
+
 
 ---
 
